@@ -1,0 +1,199 @@
+diff --git a/include/error.h b/include/error.h
+index 15fee35..67536c1 100644
+--- a/include/error.h
++++ b/include/error.h
+@@ -44,6 +44,9 @@
+ // File not a valid executable
+ #define E_NOT_EXEC 13
+ 
++// Lab4-1-exam
++#define E_SEM_NOT_OPEN 14
++
+ /*
+  * A quick wrapper around function calls to propagate errors.
+  * Use this with caution, as it leaks resources we've acquired so far.
+diff --git a/include/syscall.h b/include/syscall.h
+index 2fa3b70..6eb40a2 100644
+--- a/include/syscall.h
++++ b/include/syscall.h
+@@ -22,6 +22,12 @@ enum {
+ 	SYS_cgetc,
+ 	SYS_write_dev,
+ 	SYS_read_dev,
++	// Lab4-1-exam
++	SYS_sem_open,
++	SYS_sem_wait,
++	SYS_sem_post,
++	SYS_sem_kill,
++
+ 	MAX_SYSNO,
+ };
+ 
+diff --git a/kern/syscall_all.c b/kern/syscall_all.c
+index d56bb7e..cb460ba 100644
+--- a/kern/syscall_all.c
++++ b/kern/syscall_all.c
+@@ -518,6 +518,55 @@ int sys_read_dev(u_int va, u_int pa, u_int len) {
+     return 0;
+ }
+ 
++// Lab4-1-exam
++int sems[15];
++int sems_valid[15] = {0};
++
++void sys_sem_open(int sem_id, int n) {
++	// Lab 4-1-Exam: Your code here. (6/9)
++	if (!sems_valid[sem_id]) {
++		sems_valid[sem_id] = 1;
++		if (n >= 0 && n <= 30) {
++			sems[sem_id] = n;
++		}
++	}
++}
++
++int sys_sem_kill(int sem_id) {
++	// Lab 4-1-Exam: Your code here. (7/9)
++	if (sems_valid[sem_id]) {
++		sems_valid[sem_id] = 0;
++		return 0;
++	} else {
++		return -E_SEM_NOT_OPEN;
++	}
++}
++
++int sys_sem_wait(int sem_id) {
++	// Lab 4-1-Exam: Your code here. (8/9)
++	if (!sems_valid[sem_id]) {
++		return -E_SEM_NOT_OPEN;
++	} else if (sems[sem_id] == 0) {
++		return 1;
++	} else if (sems[sem_id] > 0) {
++		sems[sem_id]--;
++		return 0;
++	}
++}
++
++int sys_sem_post(int sem_id) {
++	// Lab 4-1-Exam: Your code here. (9/9)
++	if (sems_valid[sem_id]) {
++		if (sems[sem_id] < 30) {
++			sems[sem_id]++;
++		}
++		return 0;
++	} else {
++		return -E_SEM_NOT_OPEN;
++	}
++}
++
++
+ void* syscall_table[MAX_SYSNO] = {
+     [SYS_putchar] = sys_putchar,
+     [SYS_print_cons] = sys_print_cons,
+@@ -537,6 +586,11 @@ void* syscall_table[MAX_SYSNO] = {
+     [SYS_cgetc] = sys_cgetc,
+     [SYS_write_dev] = sys_write_dev,
+     [SYS_read_dev] = sys_read_dev,
++    // Lab4-1-exam
++    [SYS_sem_open] = sys_sem_open,
++    [SYS_sem_wait] = sys_sem_wait,
++    [SYS_sem_post] = sys_sem_post,
++    [SYS_sem_kill] = sys_sem_kill,
+ };
+ 
+ /* Overview:
+diff --git a/user/include/lib.h b/user/include/lib.h
+index 3fdeb5f..c0e8825 100644
+--- a/user/include/lib.h
++++ b/user/include/lib.h
+@@ -69,6 +69,12 @@ int syscall_cgetc(void);
+ int syscall_write_dev(void *va, u_int dev, u_int len);
+ int syscall_read_dev(void *va, u_int dev, u_int len);
+ 
++// Lab4-1-exam
++void syscall_sem_open(int sem_id, int n);
++int syscall_sem_wait(int sem_id);
++int syscall_sem_post(int sem_id);
++int syscall_sem_kill(int sem_id);
++
+ // ipc.c
+ void ipc_send(u_int whom, u_int val, const void *srcva, u_int perm);
+ u_int ipc_recv(u_int *whom, void *dstva, u_int *perm);
+@@ -119,6 +125,12 @@ int remove(const char *path);
+ int ftruncate(int fd, u_int size);
+ int sync(void);
+ 
++// Lab4-1-exam
++void sem_open(int sem_id, int n);
++int sem_wait(int sem_id);
++int sem_post(int sem_id);
++int sem_kill(int sem_id);
++
+ #define user_assert(x)                                                                             \
+ 	do {                                                                                       \
+ 		if (!(x))                                                                          \
+diff --git a/user/lib/ipc.c b/user/lib/ipc.c
+index d818c22..d7a681b 100644
+--- a/user/lib/ipc.c
++++ b/user/lib/ipc.c
+@@ -37,3 +37,28 @@ u_int ipc_recv(u_int *whom, void *dstva, u_int *perm) {
+ 
+ 	return env->env_ipc_value;
+ }
++
++void sem_open(int sem_id, int n) {
++	syscall_sem_open(sem_id, n);
++}
++
++int sem_wait(int sem_id) {
++	int r;
++	// Lab 4-1-Exam: Your code here. (1/9)
++	// Implement process blocking
++	while ((r = syscall_sem_wait(sem_id)) == 1) {
++		syscall_yield();
++	}
++	if (r != -E_SEM_NOT_OPEN) {
++		return 0;
++	}
++	return r;
++}
++
++int sem_post(int sem_id) {
++	return syscall_sem_post(sem_id);
++}
++
++int sem_kill(int sem_id) {
++	return syscall_sem_kill(sem_id);
++}
+diff --git a/user/lib/syscall_lib.c b/user/lib/syscall_lib.c
+index 80eea7f..cc155c1 100644
+--- a/user/lib/syscall_lib.c
++++ b/user/lib/syscall_lib.c
+@@ -65,6 +65,28 @@ int syscall_cgetc() {
+ 	return msyscall(SYS_cgetc);
+ }
+ 
++// Lab4-1-exam
++void syscall_sem_open(int sem_id, int n) {
++	// Lab 4-1-Exam: Your code here. (2/9)
++	msyscall(SYS_sem_open, sem_id, n);
++}
++
++int syscall_sem_wait(int sem_id) {
++	// Lab 4-1-Exam: Your code here. (3/9)
++	return msyscall(SYS_sem_wait, sem_id);
++}
++
++int syscall_sem_post(int sem_id) {
++	// Lab 4-1-Exam: Your code here. (4/9)
++	return msyscall(SYS_sem_post, sem_id);
++}
++
++int syscall_sem_kill(int sem_id) {
++	// Lab 4-1-Exam: Your code here. (5/9)
++	return msyscall(SYS_sem_kill, sem_id);
++}
++
++
+ int syscall_write_dev(void *va, u_int dev, u_int size) {
+ 	/* Exercise 5.2: Your code here. (1/2) */
+ 
